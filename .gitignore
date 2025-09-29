@@ -1,0 +1,40 @@
+# Entornos virtuales
+venv/
+.env/
+*.env
+env/
+ENV/
+.venv/
+
+# Configuración local
+instance/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Archivos de log
+*.log
+
+# Archivos de compilación/distribución
+build/
+dist/
+*.egg-info/
+
+# Archivos del IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos de coverage / pruebas
+.coverage
+htmlcov/
+.pytest_cache/
+
