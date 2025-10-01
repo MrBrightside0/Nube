@@ -1,11 +1,23 @@
-#Versión de Python que vamos a usar
+# Imagen base de Python
 FROM python:3.13.5-slim
 
-#Establecemos el directorio de trabajo
+# Crear directorio de trabajo
 WORKDIR /app
 
-#Copiamos la lista de dependencias
+# Copiar requirements primero (para aprovechar cache)
 COPY requirements.txt .
 
-#Instalamos las dependencias
+# Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar el resto del código
+COPY . .
+
+# Configurar variable de entorno para Railway (usa el puerto asignado)
+ENV PORT=5000
+
+# Exponer puerto dinámico (Railway lo reemplaza con $PORT)
+EXPOSE $PORT
+
+# Comando para correr Flask
+CMD ["python", "Nube.py"]
