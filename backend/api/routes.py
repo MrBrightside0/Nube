@@ -116,14 +116,6 @@ def subscribe_alerts():
 # - Mantener variables de entorno seguras (EARTHDATA_USER/PASS, OWM_API_KEY)
 # - Documentación automática con /docs
 
-# 2️⃣ Endpoints principales
-# - /health              -> estado del servidor
-# - /aq/latest           -> último AQI + PM2.5 + NO₂ + clima + fuentes
-# - /aq/trends           -> series históricas y correlación NO₂↔PM2.5
-# - /aq/forecast         -> pronóstico 24h PM2.5 o AQI con Prophet/ARIMA
-# - /aq/sources          -> metadata/provenance TEMPO, estaciones y clima
-# - /alerts/subscribe    -> almacenar contactos para alertas (email/WhatsApp)
-
 # 3️⃣ Integración con clientes de datos
 # - tempo_client.py      -> autenticación EDL, búsqueda, subsetting con Harmony
 # - openaq_client.py     -> consultas REST por bbox y parámetros

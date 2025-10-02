@@ -21,4 +21,22 @@ SENSORS_DICT = {"Garcia" : 4454898,
                 "Obispado" : 8059,
                 }
 
+WEATHER_STATIONS_DICT = {
+    "76393": {
+        "name": "Monterrey",
+        "lat": 25.8667,
+        "lon": -100.2000
+    },
+    "76394": {
+        "name": "Monterrey Airport",
+        "lat": 25.8667,
+        "lon": -100.2333
+    },
+    "MMMY0": {
+        "name": "Monterrey / Las Ladrilleras",
+        "lat": 25.7786,
+        "lon": -100.1071
+    }
+}
+
 

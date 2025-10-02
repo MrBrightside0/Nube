@@ -6,7 +6,7 @@ from prophet import Prophet
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 def predict_pollutant(location: str = "Universidad", pollutant: str = "pm10", days_ahead: int = 30):
-    path = f"data/{location}/*.csv"
+    path = f"air_data/{location}/*.csv"
     files = glob.glob(path)
     if not files:
         print(f"[WARN] No se encontraron archivos CSV en {path}")
@@ -53,7 +53,7 @@ def predict_pollutant(location: str = "Universidad", pollutant: str = "pm10", da
 
 
 def graph_data(location: str = "Universidad", fill_method: str = "interpolate") -> None:
-    path = f"data/{location}/*.csv"
+    path = f"air_data/{location}/*.csv"
     files = glob.glob(path)
 
     if not files:
@@ -95,7 +95,7 @@ def graph_data(location: str = "Universidad", fill_method: str = "interpolate") 
 
 
 def seasonal_analysis(location: str = "Universidad", pollutant: str = "pm10") -> None:
-    path = f"data/{location}/*.csv"
+    path = f"air_data/{location}/*.csv"
     files = glob.glob(path)
     if not files:
         print(f"[WARN] No se encontraron archivos CSV en {path}")
