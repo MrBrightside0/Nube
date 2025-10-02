@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENAQ_KEY = os.getenv("OPEN_AQ_KEY")
+TEMPO_KEY = os.getenv("TEMPO_KEY")
+EARTH_ACCESS_KEY = os.get("EARTH_ACCESS_KEY")
+
+
 SENSORS_DICT = {"Garcia" : 4454898,
                 "San Bernabe" : 4408712,
                 "Universidad" : 7951,
