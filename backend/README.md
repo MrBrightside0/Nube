@@ -14,12 +14,13 @@ Backend en Flask para la plataforma Nube, encargado de exponer servicios REST re
 backend/
 ├── Nube.py                 # Punto de entrada Flask
 ├── api/                    # Blueprint principal y conectores externos
-│   ├── routes.py           # Endpoints (actualmente placeholders)
-│   ├── constants.py        # IDs de sensores y claves esperadas via .env
-│   ├── requests_service.py # Cliente HTTP básico con autenticación OpenAQ
-│   ├── openaq_connection.py
-│   ├── weather_api_connection.py
-│   └── openstreetmap_connection.py
+│   ├── routes.py           # Endpoints Flask + integración con modelos/conectores
+│   ├── constants.py        # IDs de sensores + carga de claves (.env)
+│   ├── requests_service.py # Cliente HTTP genérico (X-API-Key, manejo de errores)
+│   ├── openaq_connection.py        # Wrapper OpenAQ v3 + descarga histórica S3
+│   ├── weather_api_connection.py  # Cliente One Call 3.0 con fallback weather
+│   ├── earth_access_connection.py # CMR/Earthdata (colecciones, granulos)
+│   └── openstreetmap_connection.py# Generador de tráfico sintético vía OSMnx
 ├── ai/                     # Scripts y datos para modelos predictivos
 │   ├── model.py            # Pipeline de entrenamiento NN + CatBoost
 │   └── predict_data.py     # Pronósticos con Prophet y análisis estacional
@@ -75,25 +76,28 @@ PORT=5000
    docker run --env-file .env -p 5000:5000 nube-backend
    ```
 
-## Endpoints actuales (`api/routes.py`)
-| Método | Ruta               | Estado | Descripción |
-|--------|--------------------|--------|-------------|
-| GET    | `/api/health`      | ✅     | Health check simple. |
-| GET    | `/api/aq/latest`   | 🚧     | Devolver última medición de PM2.5/NO2 y clima; pendiente integrar clientes. |
-| GET    | `/api/aq/trends`   | 🚧     | Tendencias históricas y correlaciones. |
-| GET    | `/api/aq/forecast` | 🚧     | Pronóstico 24h usando Prophet/ARIMA. |
-| GET    | `/api/aq/sources`  | 🚧     | Metadatos de datasets usados. |
-| POST   | `/api/alerts/subscribe` | 🚧 | Registro de preferencias para alertas. |
+## Endpoints principales (`api/routes.py`)
+| Método | Ruta                    | Descripción |
+|--------|------------------------|-------------|
+| GET    | `/api/health`          | Health check simple. |
+| GET    | `/api/aq/latest`       | Integra OpenAQ + OpenWeather (fallback) para entregar últimas mediciones, AQI y metadatos. Permite `location_id` o `lat/lon`. |
+| GET    | `/api/aq/predictions`  | Expone los modelos (gases NN + CatBoost PM10/PM2.5) usando `ai/output/dataset_final.csv`. Permite filtrar por `location_id`. |
+| GET    | `/api/aq/trends`       | Series históricas y correlación PM2.5↔NO2 a partir del dataset consolidado. |
+| GET    | `/api/aq/forecast`     | Pronóstico baseline (media 24h) para el contaminante solicitado. |
+| GET    | `/api/aq/sources`      | Lista estaciones de aire, clima y dataset de tráfico sintético usado. |
+| POST   | `/api/alerts/subscribe`| Persiste suscripciones en `api/cache/alerts.json`. |
 
-> Los endpoints marcados como 🚧 contienen TODOs para conectar con los clientes reales (`tempo_client`, `openaq_client`, `weather_client`) y persistir la información.
+> Todos los endpoints requieren que los modelos y artefactos estén generados en `ai/models/` y que las claves de entorno (`OPENAQ_KEY`, `OPENWEATHER_KEY`, `EARTH_ACCESS_KEY`) estén disponibles.
 
-## Scripts y utilidades
-- `api/openaq_connection.py`: descarga datos históricos de sensores regiomontanos desde el bucket S3 de OpenAQ.
-- `api/weather_api_connection.py`: baja series horarias de Meteostat para estaciones cercanas.
-- `api/openstreetmap_connection.py`: genera un dataset sintético de tráfico para Monterrey usando OSMnx.
-- `ai/predict_data.py`: pronósticos y visualizaciones (Prophet, resampling diario).
-- `ai/model.py`: pipeline de entrenamiento para gases y partículas (NN + CatBoost).
-- `ai/test.py`: consulta industrias cercanas a un sensor vía Overpass API (diagnóstico).
+## Scripts y utilidades destacadas
+- `api/openaq_connection.py`: wrapper de OpenAQ v3 (`/locations`, `/locations/{id}/latest`, `/measurements`) y descarga histórica desde S3.
+- `api/weather_api_connection.py`: cliente One Call 3.0 con manejo de `401` (fallback a `data/2.5/weather`).
+- `api/earth_access_connection.py`: integración con Earthdata CMR (colecciones, granulos, descarga). Incluye CLI (`python api/earth_access_connection.py granules ...`).
+- `api/openstreetmap_connection.py`: generador de tráfico sintético parametrizable mediante OSMnx.
+- `ai/create_dataset.py`: ETL que fusiona aire, clima y features temporales → `ai/output/dataset_final.csv`.
+- `ai/model.py`: entrena NN para gases y CatBoost individual para PM10/PM25; guarda artefactos + metadatos en `ai/models/`.
+- `ai/inference.py`: carga modelos/escálers y permite pruebas rápidas (`--rows`).
+- `api/requests_service.py`: cliente HTTP centralizado con cabeceras y manejo de errores.
 
 ### Datos usados por los modelos (`ai/`)
 - `ai/create_dataset.py` fusiona todas las fuentes necesarias para entrenar los modelos:
@@ -105,13 +109,14 @@ PORT=5000
 - `ai/models/` almacena los artefactos (`gas_model.keras`, `catboost_pm10.cbm`, `catboost_pm25.cbm`) junto con metadatos de columnas e imputaciones para reproducir inferencia en API (`/api/aq/predictions`).
 
 ## Flujo de trabajo recomendado
-1. **Sincronizar datos**: ejecutar los scripts de descarga según sea necesario (ocupando claves y verificando cuotas de API).
-2. **Entrenar modelos**: correr `ai/model.py` o `ai/predict_data.py` para actualizar modelos y pronósticos.
-3. **Exponer servicios**: completar los TODOs en `api/routes.py` conectando los clientes de datos y modelos.
-4. **Despliegue**: usar el Dockerfile y Railway/Render para desplegar el backend (asegura las variables de entorno).
+1. **Actualizar datos**: descarga/actualiza `ai/air_data`, `ai/weather_data`, `ai/traffic_data` con los scripts de `api/`.
+2. **Regenerar dataset**: `python ai/create_dataset.py` para producir `ai/output/dataset_final.csv`.
+3. **Entrenar modelos**: `python ai/model.py` (usa TensorFlow + CatBoost) y genera artefactos en `ai/models/`.
+4. **Validar inferencia**: `python ai/inference.py --rows 5` o probar `/api/aq/predictions` ya con Flask en marcha.
+5. **Desplegar**: iniciar Flask (`python Nube.py`) o empaquetar con Docker.
 
 ## Próximos pasos sugeridos
-- Implementar los clientes `tempo_client`, `openaq_client` y `weather_client` y conectarlos en los endpoints.
-- Añadir almacenamiento para suscripciones (por ejemplo, base de datos ligera o servicio externo).
-- Sustituir prints por logging estructurado y manejar errores HTTP con códigos apropiados.
-- Automatizar pruebas básicas de los endpoints (PyTest + Flask testing client).
+- Conectar futuras fuentes (p. ej., TEMPO) reutilizando la arquitectura de clientes.
+- Reemplazar prints por logging estructurado y añadir manejo global de errores HTTP.
+- Persistir suscripciones/alertas en almacenamiento externo (DB, servicio de notificaciones).
+- Automatizar pruebas (PyTest) para los endpoints y los pipelines de inferencia.
