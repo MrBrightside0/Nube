@@ -1,81 +1,32 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+from preprocessor import AirQualityPreprocessor
 import numpy as np
 
-# -----------------------------
-# 1️⃣ Cargar dataset final
-# -----------------------------
-dataset_path = "dataset_final_2024.csv"
-print(f"[INFO] Cargando dataset: {dataset_path}")
-df = pd.read_csv(dataset_path)
-print(f"[INFO] Dataset cargado: {df.shape}")
+# Assuming X_train, X_test, y_train, y_test already exist
+dataset_path = "output/dataset_final.csv"
+pollutants = ['co', 'no', 'no2', 'nox', 'o3', 'pm10', 'pm25', 'so2']
 
-# -----------------------------
-# 2️⃣ Filtrar filas con datos de aire (pm25)
-# -----------------------------
-print("[INFO] Filtrando filas con PM2.5")
-df_air = df[df['parameter'] == 'pm25'].copy()
-df_air = df_air.dropna(subset=['value'])
-print(f"[INFO] Filas de aire (pm25) disponibles: {df_air.shape[0]}")
+preprocessor = AirQualityPreprocessor(dataset_path)
+X_train, X_test, y_train, y_test = preprocessor.preprocess(pollutants)
 
-# -----------------------------
-# 3️⃣ Preparar features y target
-# -----------------------------
-target = 'value'
-features = [
-    'speedLimit', 'distance', 'segmentProbeCounts_num', 'emissionProxy', 'isHighway',
-    'temp', 'rhum', 'wspd', 'pres', 'cldc', 'coco',
-    'hour', 'day', 'month'
-]
+rf_model = MultiOutputRegressor(RandomForestRegressor(
+    n_estimators=500,
+    max_depth=None,
+    random_state=42,
+    min_samples_leaf=2,
+    n_jobs=-1
+))
 
-print("[INFO] Preparando features")
-df_air['isHighway'] = df_air['isHighway'].astype(int)
-for col in features:
-    if col in df_air.columns:
-        df_air[col] = pd.to_numeric(df_air[col], errors='coerce')
-        df_air[col] = df_air[col].fillna(df_air[col].median())
+rf_model.fit(X_train, y_train)
 
-X = df_air[features]
-y = df_air[target]
+# Predict
+y_pred = rf_model.predict(X_test)
 
-# -----------------------------
-# 4️⃣ Dividir en entrenamiento y prueba
-# -----------------------------
-print("[INFO] Dividiendo datos en entrenamiento y prueba")
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-print(f"[INFO] Datos de entrenamiento: {X_train.shape}, Datos de prueba: {X_test.shape}")
+# Evaluation
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred, multioutput='uniform_average')
 
-# -----------------------------
-# 5️⃣ Entrenar modelo baseline
-# -----------------------------
-print("[INFO] Entrenando RandomForestRegressor")
-model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
-
-# -----------------------------
-# 6️⃣ Predecir y evaluar
-# -----------------------------
-print("[INFO] Realizando predicciones")
-y_pred = model.predict(X_test)
-
-mae = mean_absolute_error(y_test, y_pred)
-rmse = mean_squared_error(y_test, y_pred, squared=False)
-
-print("[INFO] Evaluación del modelo:")
-print(f"[INFO] MAE: {mae:.4f}")
-print(f"[INFO] RMSE: {rmse:.4f}")
-
-# -----------------------------
-# 7️⃣ Guardar predicciones (opcional)
-# -----------------------------
-output_pred = "../ai/predicciones_baseline.csv"
-df_results = X_test.copy()
-df_results['y_true'] = y_test
-df_results['y_pred'] = y_pred
-df_results.to_csv(output_pred, index=False)
-print(f"[INFO] Predicciones guardadas en: {output_pred}")
+print(f"[INFO] Random Forest Multi-Output MSE: {mse:.4f}, R2: {r2:.4f}")
 

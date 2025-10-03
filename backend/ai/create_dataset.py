@@ -1,115 +1,92 @@
 import pandas as pd
-from pathlib import Path
+import glob
+import os
+
+def encontrar_archivos(base_path):
+    """Encuentra todos los CSV y CSV.GZ en carpetas y subcarpetas"""
+    return glob.glob(os.path.join(base_path, '**', '*.csv'), recursive=True) + \
+           glob.glob(os.path.join(base_path, '**', '*.csv.gz'), recursive=True)
 
 # -----------------------------
-# 1️⃣ Cargar datos de tráfico
+# Cargar y procesar clima
 # -----------------------------
-traffic_file = "/home/mario/Downloads/segmentResults_for_model.csv"
-df_traffic = pd.read_csv(traffic_file)
-print(f"[INFO] Tráfico cargado: {df_traffic.shape}")
+weather_files = encontrar_archivos("weather_data")
+weather_dfs = []
 
-# -----------------------------
-# 2️⃣ Cargar datos de clima (2024)
-# -----------------------------
-weather_folder = "../ai/weather_data"
-df_weather_list = []
-
-for path in Path(weather_folder).rglob("*.csv.gz"):
-    df_tmp = pd.read_csv(path, compression='gzip')
+for file in weather_files:
+    df = pd.read_csv(file)
     
-    # Crear datetime
-    df_tmp['datetime'] = pd.to_datetime(df_tmp[['year','month','day','hour']], errors='coerce', utc=True)
-    df_tmp = df_tmp.dropna(subset=['datetime'])
+    # Filtrar solo años 2023 a 2025 si existe columna 'year'
+    if 'year' in df.columns:
+        df = df[df['year'].between(2023, 2025)]
     
-    # Filtrar 2024
-    df_tmp = df_tmp[df_tmp['datetime'].dt.year == 2024]
+    # Crear columna datetime
+    df['datetime'] = pd.to_datetime(df[['year','month','day','hour']], errors='coerce')
+    df = df.dropna(subset=['datetime'])
     
-    # Convertir lat/lon a float si existen
-    for col in ['lat', 'lon']:
-        if col in df_tmp.columns:
-            df_tmp[col] = pd.to_numeric(df_tmp[col], errors='coerce')
+    # Seleccionar solo columnas presentes
+    cols = ['datetime', 'temp', 'rhum', 'prcp', 'wdir', 'wspd', 'wpgt', 'pres', 'cldc', 'coco']
+    cols_presentes = [c for c in cols if c in df.columns]
+    df = df[cols_presentes]
     
-    df_weather_list.append(df_tmp)
+    weather_dfs.append(df)
 
-df_weather = pd.concat(df_weather_list, ignore_index=True)
-print(f"[INFO] Clima cargado: {df_weather.shape}")
+if not weather_dfs:
+    raise ValueError("[INFO] No se encontraron archivos de clima entre 2023 y 2025")
+
+weather = pd.concat(weather_dfs, ignore_index=True)
+weather = weather.groupby('datetime').mean().reset_index()
+# Convertir a UTC
+weather['datetime'] = pd.to_datetime(weather['datetime'], errors='coerce').dt.tz_localize('UTC', ambiguous='NaT')
+print(f"[INFO] Clima cargado. Filas: {weather.shape[0]}, Columnas: {weather.shape[1]}")
 
 # -----------------------------
-# 3️⃣ Cargar datos de calidad del aire (2024)
+# Cargar y procesar aire
 # -----------------------------
-air_folder = "../ai/air_data"
-df_air_list = []
+air_base = "air_data"
+air_dfs = []
 
-for path in Path(air_folder).rglob("*"):
-    if path.suffix in [".csv", ".gz"]:
-        df_tmp = pd.read_csv(path, compression='gzip' if path.suffix == ".gz" else None)
-        
-        if 'datetime' in df_tmp.columns:
-            df_tmp['datetime'] = pd.to_datetime(df_tmp['datetime'], utc=True, errors='coerce')
-            df_tmp = df_tmp.dropna(subset=['datetime'])
-            df_tmp = df_tmp[df_tmp['datetime'].dt.year == 2024]
+for loc_folder in os.listdir(air_base):
+    loc_path = os.path.join(air_base, loc_folder)
+    if os.path.isdir(loc_path):
+        files = glob.glob(os.path.join(loc_path, '*.csv')) + glob.glob(os.path.join(loc_path, '*.csv.gz'))
+        for file in files:
+            df = pd.read_csv(file)
             
-            # Convertir lat/lon a float si existen
-            for col in ['lat', 'lon']:
-                if col in df_tmp.columns:
-                    df_tmp[col] = pd.to_numeric(df_tmp[col], errors='coerce')
+            # Convertir datetime de manera robusta
+            df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce', utc=True)
+            df = df.dropna(subset=['datetime'])
             
-            df_air_list.append(df_tmp)
+            # Filtrar solo años 2023 a 2025
+            df = df[(df['datetime'].dt.year >= 2023) & (df['datetime'].dt.year <= 2025)]
+            
+            air_dfs.append(df)
 
-df_air = pd.concat(df_air_list, ignore_index=True)
-print(f"[INFO] Aire cargado: {df_air.shape}")
+if not air_dfs:
+    raise ValueError("[INFO] No se encontraron archivos de aire entre 2023 y 2025")
 
-# -----------------------------
-# 4️⃣ Preparar columnas de join
-# -----------------------------
-# Redondear lat/lon para merge aproximado
-for df in [df_air, df_weather]:
-    for col in ['lat', 'lon']:
-        if col in df.columns:
-            df[f"{col}_r"] = df[col].round(3)
+air = pd.concat(air_dfs, ignore_index=True)
 
-# En tráfico, redondear lat_start/lon_start si existen
-for col in ['lat_start', 'lon_start']:
-    if col in df_traffic.columns:
-        df_traffic[f"{col}_r"] = pd.to_numeric(df_traffic[col], errors='coerce').round(3)
+# Pivotar: filas = datetime, columnas = cada contaminante
+air_pivot = air.pivot_table(index='datetime',
+                            columns='parameter',
+                            values='value',
+                            aggfunc='mean').reset_index()
 
-# -----------------------------
-# 5️⃣ Asegurar mismo tipo datetime (ns, UTC)
-# -----------------------------
-df_traffic['datetime'] = pd.to_datetime(df_traffic.get('datetime', pd.Timestamp('2024-01-01')), utc=True)
-df_traffic['datetime'] = df_traffic['datetime'].astype('datetime64[ns, UTC]')
-df_weather['datetime'] = df_weather['datetime'].astype('datetime64[ns, UTC]')
-df_air['datetime'] = df_air['datetime'].astype('datetime64[ns, UTC]')
+# Normalizar datetime a UTC para merge
+air_pivot['datetime'] = pd.to_datetime(air_pivot['datetime'], errors='coerce').dt.tz_convert('UTC')
+print(f"[INFO] Aire cargado. Filas: {air_pivot.shape[0]}, Columnas: {air_pivot.shape[1]}")
 
 # -----------------------------
-# 6️⃣ Merge tráfico con clima
+# Unir clima y contaminación
 # -----------------------------
-df_traffic_weather = pd.merge_asof(
-    df_traffic.sort_values('datetime'),
-    df_weather.sort_values('datetime'),
-    on='datetime',
-    direction='nearest',
-    tolerance=pd.Timedelta('1h')  # Ajusta según necesidad
-)
-print(f"[INFO] Merge tráfico-clima: {df_traffic_weather.shape}")
+dataset = pd.merge(air_pivot, weather, on='datetime', how='inner')
+print(f"[INFO] Dataset unido. Filas: {dataset.shape[0]}, Columnas: {dataset.shape[1]}")
 
 # -----------------------------
-# 7️⃣ Merge con aire
+# Guardar dataset final
 # -----------------------------
-df_final = pd.merge_asof(
-    df_traffic_weather.sort_values('datetime'),
-    df_air.sort_values('datetime'),
-    on='datetime',
-    direction='nearest',
-    tolerance=pd.Timedelta('1h'),
-    suffixes=('', '_air')
-)
-print(f"[INFO] Merge final con aire: {df_final.shape}")
-
-# -----------------------------
-# 8️⃣ Guardar dataset final
-# -----------------------------
-output_csv = "../ai/dataset_final_2024.csv"
-df_final.to_csv(output_csv, index=False)
-print(f"[INFO] Dataset final listo en: {output_csv}")
+os.makedirs("output", exist_ok=True)
+dataset.to_csv("output/dataset_final.csv", index=False)
+print(f"[INFO] Dataset creado: output/dataset_final.csv")
 
