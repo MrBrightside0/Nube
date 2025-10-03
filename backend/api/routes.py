@@ -1,4 +1,8 @@
+import json
+
 from flask import Blueprint, jsonify, request
+
+from ai import inference
 
 api_bp = Blueprint("api", __name__)
 
@@ -30,6 +34,56 @@ def get_latest():
         "sources": []
     }
     return jsonify(data)
+
+
+@api_bp.route("/aq/predictions", methods=["GET"])
+def get_predictions():
+    rows = request.args.get("rows", default=1, type=int)
+    include_particles = request.args.get("include_particles", default="true").lower() not in {"false", "0", "no"}
+
+    rows = max(rows, 1)
+
+    try:
+        base_dataset = inference._load_base_dataset()
+    except FileNotFoundError:
+        return (
+            jsonify({"error": "Dataset not found. Run the ETL pipeline to generate output/dataset_final.csv."}),
+            500,
+        )
+
+    sample = base_dataset.tail(rows).reset_index(drop=True)
+
+    inputs_df = sample.copy()
+    if "datetime" in inputs_df:
+        inputs_df["datetime"] = inputs_df["datetime"].astype(str)
+
+    response: dict[str, object] = {
+        "rows": rows,
+        "inputs": json.loads(inputs_df.to_json(orient="records")) if not inputs_df.empty else [],
+    }
+
+    try:
+        gas_predictions = inference.predict_gases(sample.copy())
+        response["gases"] = json.loads(gas_predictions.to_json(orient="records"))
+    except FileNotFoundError:
+        response["gases_error"] = "Gas model artifacts not found. Train the gas model first."
+
+    if include_particles:
+        particle_results: dict[str, object] = {}
+        particle_errors: dict[str, str] = {}
+        for target in ("pm10", "pm25"):
+            try:
+                preds = inference.predict_particle(target, sample.copy())
+                particle_results[target] = [float(value) for value in preds.tolist()]
+            except FileNotFoundError:
+                particle_results[target] = None
+                particle_errors[target] = f"CatBoost artifacts for {target} not found."
+
+        response["particles"] = particle_results
+        if particle_errors:
+            response["particle_errors"] = particle_errors
+
+    return jsonify(response)
 
 
 # ---------------------------
@@ -130,4 +184,3 @@ def subscribe_alerts():
 # - Asegurar que endpoints entreguen el formato estándar:
 #   source | var | lat | lon | ts_utc | value | unit | quality_flag
 # - Facilitar datos limpios para ML baseline (Prophet/ARIMA)
-

@@ -95,6 +95,15 @@ PORT=5000
 - `ai/model.py`: pipeline de entrenamiento para gases y partículas (NN + CatBoost).
 - `ai/test.py`: consulta industrias cercanas a un sensor vía Overpass API (diagnóstico).
 
+### Datos usados por los modelos (`ai/`)
+- `ai/create_dataset.py` fusiona todas las fuentes necesarias para entrenar los modelos:
+  - **Calidad del aire**: agrega todas las estaciones presentes en `ai/air_data/` (Universidad, Tecnológico, Centro de Monterrey, San Nicolás, Escobedo, Apodaca). Cada CSV se pivota por `parameter`, se normalizan columnas (`location_id`, `value`) y se ordena por estación.
+  - **Clima**: combina todas las estaciones Meteostat en `ai/weather_data/`, calcula medias horarias (`temp_mean`, `rhum_mean`, `wspd_mean`) y preserva las columnas individuales (`temp_76393`, `temp_MMMY0`, etc.).
+  - **Ingeniería de atributos**: interpola huecos cortos (hasta 6 muestras), genera rolling averages y diferencias (6/24 h) para cada contaminante, además de variables de calendario (hora, día de la semana, mes, `sin/cos`).
+- El dataset unificado se guarda en `ai/output/dataset_final.csv` y contiene todas las estaciones de la ZMM con `location_id`, `lat`, `lon` y las features generadas.
+- `ai/model.py` consume ese dataset consolidado: el modelo de gases usa todas las variables meteorológicas y las series de contaminantes, mientras que los modelos CatBoost de partículas se entrenan por objetivo pero siguen viendo los datos de todas las estaciones (sólo descartan filas que no tengan el contaminante específico).
+- `ai/models/` almacena los artefactos (`gas_model.keras`, `catboost_pm10.cbm`, `catboost_pm25.cbm`) junto con metadatos de columnas e imputaciones para reproducir inferencia en API (`/api/aq/predictions`).
+
 ## Flujo de trabajo recomendado
 1. **Sincronizar datos**: ejecutar los scripts de descarga según sea necesario (ocupando claves y verificando cuotas de API).
 2. **Entrenar modelos**: correr `ai/model.py` o `ai/predict_data.py` para actualizar modelos y pronósticos.
@@ -106,4 +115,3 @@ PORT=5000
 - Añadir almacenamiento para suscripciones (por ejemplo, base de datos ligera o servicio externo).
 - Sustituir prints por logging estructurado y manejar errores HTTP con códigos apropiados.
 - Automatizar pruebas básicas de los endpoints (PyTest + Flask testing client).
-
