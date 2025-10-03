@@ -1,88 +1,86 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 import osmnx as ox
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
 
-# ----------------------------
-# 1️⃣ Descargar la red de carreteras
-# ----------------------------
-city = "Monterrey, Mexico"
-print("[INFO] Descargando la red de carreteras de Monterrey desde OpenStreetMap...")
-G = ox.graph_from_place(city, network_type='drive')
+LOGGER = logging.getLogger(__name__)
 
-print("[INFO] Convirtiendo la red a GeoDataFrame (segmentos de vía)...")
-edges = ox.graph_to_gdfs(G, nodes=False, edges=True)
 
-print("[INFO] Seleccionando columnas relevantes y rellenando valores faltantes...")
-edges = edges[['name', 'highway', 'length', 'lanes']].fillna('desconocido')
-print(f"[INFO] Total de segmentos de carretera cargados: {len(edges)}")
+@dataclass(frozen=True)
+class TrafficConfig:
+    """Configuration parameters for the synthetic traffic generator."""
 
-# Normalizar highway (si es lista -> tomar el primero)
-edges['highway'] = edges['highway'].apply(lambda x: x[0] if isinstance(x, list) else x)
+    city: str = "Monterrey, Mexico"
+    start: datetime = datetime(2025, 1, 1)
+    end: datetime = datetime(2025, 1, 2)
+    output_path: Path = Path("monterrey_traffic_estimated.csv.gz")
 
-# ----------------------------
-# 2️⃣ Definir volúmenes estimados por tipo de vía
-# ----------------------------
-road_volumes = {
-    'motorway': 15000,
-    'primary': 5000,
-    'secondary': 2000,
-    'residential': 200
+
+ROAD_VOLUMES = {
+    "motorway": 15_000,
+    "primary": 5_000,
+    "secondary": 2_000,
+    "residential": 200,
 }
-print("[INFO] Se definieron los volúmenes estimados de tráfico por tipo de vía.")
 
-# ----------------------------
-# 3️⃣ Definir factores horarios (rush hours)
-# ----------------------------
-hour_factors = {
+HOUR_FACTORS = {
     (0, 5): 0.2,
     (6, 8): 1.0,
     (9, 15): 0.5,
     (16, 19): 1.0,
-    (20, 23): 0.3
+    (20, 23): 0.3,
 }
 
-def get_hour_factor(hour):
-    return next(v for k, v in hour_factors.items() if k[0] <= hour <= k[1])
 
-print("[INFO] Se definieron los factores horarios de tráfico (horas pico).")
-
-# ----------------------------
-# 4️⃣ Generar dataset por hora
-# ----------------------------
-start_date = datetime(2025, 1, 1)
-end_date = datetime(2025, 1, 2)  # se puede cambiar el rango
-hours = pd.date_range(start_date, end_date, freq='h')[:-1]  # corregido: 'h' en vez de 'H'
-print(f"[INFO] Generando dataset para {len(hours)} horas...")
-
-data = []
-
-for dt in hours:
-    factor = get_hour_factor(dt.hour)
-    
-    for _, row in edges.iterrows():
-        base_volume = road_volumes.get(row['highway'], 500)  # valor por defecto si no está definido
-        traffic = base_volume * factor * np.random.normal(1.0, 0.1)  # añadir variabilidad ±10%
-        traffic = max(0, int(traffic))
-        
-        data.append({
-            'datetime': dt,
-            'road_name': row['name'],
-            'road_type': row['highway'],
-            'length_m': row['length'],
-            'lanes': row['lanes'],
-            'estimated_traffic': traffic
-        })
-
-print("[INFO] Creando dataframe final...")
-df = pd.DataFrame(data)
-
-print("[INFO] Guardando dataset comprimido en 'monterrey_traffic_estimated.csv.gz'...")
-df.to_csv('monterrey_traffic_estimated.csv.gz', index=False, compression='gzip')
-
-print("[INFO] Dataset listo y comprimido uwu")
+def _hour_factor(hour: int) -> float:
+    return next(value for window, value in HOUR_FACTORS.items() if window[0] <= hour <= window[1])
 
 
-print("[INFO] Dataset listo uwu")
-print(df.head())
+def _prepare_edges(city: str) -> pd.DataFrame:
+    LOGGER.info("Downloading street network for %s", city)
+    graph = ox.graph_from_place(city, network_type="drive")
+    edges = ox.graph_to_gdfs(graph, nodes=False, edges=True)
+    edges = edges[["name", "highway", "length", "lanes"]].fillna("desconocido")
+    edges["highway"] = edges["highway"].apply(lambda val: val[0] if isinstance(val, list) else val)
+    return edges.reset_index(drop=True)
 
+
+def generate_traffic_dataset(config: TrafficConfig = TrafficConfig()) -> Path:
+    """Generate a synthetic hourly traffic dataset based on OSM road segments."""
+
+    edges = _prepare_edges(config.city)
+    hours = pd.date_range(config.start, config.end, freq="h", inclusive="left")
+
+    LOGGER.info(
+        "Generating synthetic traffic for %s hours (%s to %s)",
+        len(hours),
+        config.start,
+        config.end,
+    )
+    records = []
+
+    for ts in hours:
+        factor = _hour_factor(ts.hour)
+        jitter = np.random.normal(1.0, 0.1, size=len(edges))
+        base = edges["highway"].map(lambda highway: ROAD_VOLUMES.get(highway, 500))
+        traffic = np.maximum(0, (base * factor * jitter).astype(int))
+
+        chunk = edges.copy()
+        chunk["datetime"] = ts
+        chunk["estimated_traffic"] = traffic
+        records.append(chunk)
+
+    df = pd.concat(records, ignore_index=True)
+    output_path = config.output_path
+    df.to_csv(output_path, index=False, compression="gzip")
+    LOGGER.info("Traffic dataset saved to %s", output_path)
+    return output_path
+
+
+__all__ = ["TrafficConfig", "generate_traffic_dataset"]
