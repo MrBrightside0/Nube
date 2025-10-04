@@ -16,44 +16,99 @@ except ImportError:  # pragma: no cover - standalone execution
 
 
 @dataclass
-class PredictionSnapshot:
-    location: str
+class RecommendationContext:
+    scope: str  # "station" or "metropolitan"
+    location: Optional[str]
     datetime_iso: Optional[str]
     pm10: Optional[float]
     pm25: Optional[float]
     gases: Dict[str, float]
+    particles: Dict[str, float]
+    aggregates: Optional[Dict[str, Dict[str, float]]] = None
+    highlights: Optional[Dict[str, Dict[str, float]]] = None
 
 
 SYSTEM_PROMPT = (
     "Eres un asistente experto en calidad del aire en la Zona Metropolitana de Monterrey. "
-    "Analiza los niveles pronosticados de PM10, PM2.5 y gases criterio y responde en español con: "
+    "Recibirás pronósticos para una estación específica o para el agregado metropolitano. "
+    "Responde en español con los puntos: "
     "1) Evaluación de riesgo (bajo, moderado, alto, muy alto) y breve explicación. "
     "2) Recomendaciones de mitigación para autoridades (acciones concretas). "
     "3) Recomendaciones para la población general (hábitos, protección personal)."
 )
 
 
-def build_user_prompt(snapshot: PredictionSnapshot) -> str:
-    return (
-        "Ubicación: {location}.\n"
-        "Fecha y hora (UTC): {datetime}.\n"
-        "PM10 pronosticado: {pm10}.\n"
-        "PM2.5 pronosticado: {pm25}.\n"
-        "Gases (ppm o µg/m³ según corresponda): {gases}.\n"
-        "Responde siguiendo el formato solicitado."
-    ).format(
-        location=snapshot.location,
-        datetime=snapshot.datetime_iso or "no especificada",
-        pm10=_format(snapshot.pm10, "µg/m³"),
-        pm25=_format(snapshot.pm25, "µg/m³"),
-        gases=_format_gases(snapshot.gases),
-    )
+def build_user_prompt(context: RecommendationContext) -> str:
+    scope = context.scope.lower()
+    lines = [
+        f"Alcance: {'estacion especifica' if scope == 'station' else 'area metropolitana completa'}.",
+    ]
+
+    if scope == "station":
+        lines.extend(
+            [
+                f"Estacion: {context.location or 'desconocida'}.",
+                f"Fecha y hora (UTC): {context.datetime_iso or 'no especificada'}.",
+                f"PM10 pronosticado: {_format(context.pm10, 'ug/m3')}.",
+                f"PM2.5 pronosticado: {_format(context.pm25, 'ug/m3')}.",
+                f"Gases criterio (ppm o ug/m3): {_format_gases(context.gases)}.",
+            ]
+        )
+    else:
+        particles = context.aggregates.get("particles") if context.aggregates else {}
+        gases = context.aggregates.get("gases") if context.aggregates else {}
+
+        lines.append("Promedios recientes (ultimas horas por estacion):")
+        if particles:
+            descriptions = []
+            for name, stats in particles.items():
+                if not isinstance(stats, dict):
+                    continue
+                avg_text = _format(stats.get("avg"), "ug/m3")
+                max_text = _format(stats.get("max"), "ug/m3")
+                descriptions.append(f"{name.upper()}: media {avg_text}, maximo {max_text}")
+            if descriptions:
+                lines.append(" - Partículas: " + "; ".join(descriptions) + ".")
+        if gases:
+            descriptions = []
+            for name, stats in gases.items():
+                if not isinstance(stats, dict):
+                    continue
+                avg_value = stats.get("avg", stats.get("overall_avg"))
+                descriptions.append(f"{name.upper()}: {_format(avg_value, '')}")
+            if descriptions:
+                lines.append(" - Gases: " + "; ".join(descriptions) + ".")
+
+        if context.highlights:
+            highlight_lines = []
+            for name, info in context.highlights.items():
+                value = info.get("value")
+                location = info.get("location_name") or info.get("location_id")
+                timestamp = info.get("timestamp") or info.get("datetime")
+                if value is not None and location:
+                    highlight_lines.append(
+                        f"{name.upper()}: pico {value:.2f} ug/m3 en {location} ({timestamp})."
+                    )
+            if highlight_lines:
+                lines.append("Picos destacados:" + " ".join(highlight_lines))
+
+        if context.particles:
+            lines.append(
+                "PM10 estimado base: "
+                f"{_format(context.particles.get('pm10'), 'ug/m3')} | "
+                "PM2.5 estimado base: "
+                f"{_format(context.particles.get('pm25'), 'ug/m3')}"
+            )
+
+    lines.append("Responde siguiendo el formato solicitado.")
+    return "\n".join(lines)
 
 
 def _format(value: Optional[float], unit: str) -> str:
     if value is None:
         return "sin dato"
-    return f"{value:.2f} {unit}"
+    suffix = f" {unit}" if unit else ""
+    return f"{value:.2f}{suffix}"
 
 
 def _format_gases(gases: Dict[str, float]) -> str:
@@ -62,7 +117,7 @@ def _format_gases(gases: Dict[str, float]) -> str:
     return ", ".join(f"{name.upper()}: {val:.4f}" for name, val in gases.items())
 
 
-def load_snapshot() -> PredictionSnapshot:
+def load_snapshot() -> RecommendationContext:
     try:
         payload = json.load(sys.stdin)
     except json.JSONDecodeError as exc:
@@ -71,12 +126,16 @@ def load_snapshot() -> PredictionSnapshot:
     if not isinstance(payload, dict):
         raise SystemExit("Se esperaba un objeto JSON con las predicciones.")
 
-    return PredictionSnapshot(
-        location=payload.get("location", "Ubicación desconocida"),
+    return RecommendationContext(
+        scope=str(payload.get("scope", "station")),
+        location=payload.get("location"),
         datetime_iso=payload.get("datetime"),
         pm10=_safe_float(payload.get("pm10")),
         pm25=_safe_float(payload.get("pm25")),
         gases={k: _safe_float(v) for k, v in payload.get("gases", {}).items() if _safe_float(v) is not None},
+        particles={k: _safe_float(v) for k, v in payload.get("particles", {}).items() if _safe_float(v) is not None},
+        aggregates=payload.get("aggregates"),
+        highlights=payload.get("highlights"),
     )
 
 

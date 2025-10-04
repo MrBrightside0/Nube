@@ -13,9 +13,9 @@ from ai import inference
 from .constants import SENSORS_DICT, WEATHER_STATIONS_DICT
 
 try:
-    from .openai_assistant import PredictionSnapshot, build_user_prompt, request_recommendations
+    from .openai_assistant import RecommendationContext, build_user_prompt, request_recommendations
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    PredictionSnapshot = None
+    RecommendationContext = None
     build_user_prompt = None
     request_recommendations = None
 from .openaq_connection import OpenAQClient
@@ -308,13 +308,14 @@ def get_predictions():
     return jsonify(response)
 
 
-@api_bp.route("/aq/recommendation", methods=["POST"])
-def get_recommendation():
+@api_bp.route("/aq/recommendations", methods=["POST"])
+def get_recommendations():
     payload = request.get_json(silent=True) or {}
+    scope = str(payload.get("scope", "station")).lower()
     location_id = payload.get("location_id")
     rows = payload.get("rows", 1)
 
-    if not all((PredictionSnapshot, build_user_prompt, request_recommendations)):
+    if not all((RecommendationContext, build_user_prompt, request_recommendations)):
         return (
             jsonify(
                 {
@@ -325,78 +326,141 @@ def get_recommendation():
             500,
         )
 
-    if not location_id:
-        return (
-            jsonify({"error": "missing_location_id", "message": "Provide location_id in payload."}),
-            400,
-        )
-
     try:
         rows = int(rows)
     except (TypeError, ValueError):
         rows = 1
     rows = max(rows, 1)
 
-    try:
-        base_dataset = inference._load_base_dataset()
-    except FileNotFoundError:
-        return (
-            jsonify({"error": "dataset_not_found", "message": "Run the ETL pipeline to generate output/dataset_final.csv."}),
-            500,
-        )
+    if scope not in {"station", "metropolitan", "metro", "general"}:
+        return (jsonify({"error": "invalid_scope", "message": "Scope must be 'station' or 'metropolitan'."}), 400)
 
-    filtered = base_dataset[base_dataset["location_id"].astype(str) == str(location_id)]
-    if filtered.empty:
-        return (
-            jsonify(
-                {
-                    "error": "location_not_found",
-                    "message": f"No data found for location_id={location_id}.",
-                    "available_location_ids": sorted(base_dataset["location_id"].astype(str).unique().tolist()),
-                }
-            ),
-            404,
-        )
+    if scope == "station":
+        if not location_id:
+            return (
+                jsonify({"error": "missing_location_id", "message": "Provide location_id in payload."}),
+                400,
+            )
 
-    sample = filtered.tail(rows).reset_index(drop=True)
-    latest_row = sample.tail(1).reset_index(drop=True)
-
-    gas_predictions = None
-    try:
-        gas_predictions = inference.predict_gases(latest_row.copy())
-    except FileNotFoundError:
-        pass
-
-    particle_outputs: dict[str, float | None] = {"pm10": None, "pm25": None}
-    for target in ("pm10", "pm25"):
         try:
-            preds = inference.predict_particle(target, latest_row.copy())
-            if preds.size:
-                particle_outputs[target] = float(preds.flatten()[-1])
+            base_dataset = inference._load_base_dataset()
         except FileNotFoundError:
-            particle_outputs[target] = None
+            return (
+                jsonify({"error": "dataset_not_found", "message": "Run the ETL pipeline to generate output/dataset_final.csv."}),
+                500,
+            )
 
-    gases_dict: dict[str, float] = {}
-    if gas_predictions is not None and not gas_predictions.empty:
-        gases_dict = {k: float(v) for k, v in gas_predictions.iloc[-1].to_dict().items()}
+        filtered = base_dataset[base_dataset["location_id"].astype(str) == str(location_id)]
+        if filtered.empty:
+            return (
+                jsonify(
+                    {
+                        "error": "location_not_found",
+                        "message": f"No data found for location_id={location_id}.",
+                        "available_location_ids": sorted(base_dataset["location_id"].astype(str).unique().tolist()),
+                    }
+                ),
+                404,
+            )
 
-    latest_record = latest_row.iloc[-1].to_dict()
-    location_name = latest_record.get("location_name") or f"location {location_id}"
-    datetime_value = latest_record.get("datetime")
-    if pd.notna(datetime_value):
-        datetime_iso = str(datetime_value)
+        sample = filtered.tail(rows).reset_index(drop=True)
+        latest_row = sample.tail(1).reset_index(drop=True)
+
+        gas_predictions = None
+        try:
+            gas_predictions = inference.predict_gases(latest_row.copy())
+        except FileNotFoundError:
+            pass
+
+        particle_outputs: dict[str, float | None] = {"pm10": None, "pm25": None}
+        for target in ("pm10", "pm25"):
+            try:
+                preds = inference.predict_particle(target, latest_row.copy())
+                if preds.size:
+                    particle_outputs[target] = float(preds.flatten()[-1])
+            except FileNotFoundError:
+                particle_outputs[target] = None
+
+        gases_dict: dict[str, float] = {}
+        if gas_predictions is not None and not gas_predictions.empty:
+            gases_dict = {k: float(v) for k, v in gas_predictions.iloc[-1].to_dict().items()}
+
+        latest_record = latest_row.iloc[-1].to_dict()
+        location_name = latest_record.get("location_name") or f"location {location_id}"
+        datetime_value = latest_record.get("datetime")
+        datetime_iso = str(datetime_value) if pd.notna(datetime_value) else None
+
+        context = RecommendationContext(
+            scope="station",
+            location=str(location_name),
+            datetime_iso=datetime_iso,
+            pm10=particle_outputs.get("pm10"),
+            pm25=particle_outputs.get("pm25"),
+            gases=gases_dict,
+            particles={k: v for k, v in particle_outputs.items() if v is not None},
+        )
+
+        response_payload = {
+            "scope": "station",
+            "location_id": str(location_id),
+            "location_name": location_name,
+            "datetime": datetime_iso,
+            "inputs": json.loads(latest_row.to_json(orient="records"))[0],
+            "gases": gases_dict,
+            "particles": particle_outputs,
+        }
+
     else:
-        datetime_iso = None
+        try:
+            summary = inference.build_metropolitan_summary(rows_per_location=rows)
+        except FileNotFoundError:
+            return (
+                jsonify(
+                    {
+                        "error": "dataset_not_found",
+                        "message": "Run the ETL pipeline to generate output/dataset_final.csv.",
+                    }
+                ),
+                500,
+            )
+        except ValueError as exc:
+            return (jsonify({"error": "invalid_request", "message": str(exc)}), 400)
 
-    snapshot = PredictionSnapshot(
-        location=str(location_name),
-        datetime_iso=datetime_iso,
-        pm10=particle_outputs.get("pm10"),
-        pm25=particle_outputs.get("pm25"),
-        gases=gases_dict,
-    )
+        particles_stats = summary.get("summary", {}).get("particles", {})
+        gases_stats = summary.get("summary", {}).get("gases", {})
+        highlights = summary.get("highlights")
 
-    prompt = build_user_prompt(snapshot)
+        aggregate_particles = {
+            key: stats for key, stats in particles_stats.items() if isinstance(stats, dict)
+        }
+        base_particles = {
+            key: stats.get("avg")
+            for key, stats in aggregate_particles.items()
+            if isinstance(stats, dict)
+        }
+
+        context = RecommendationContext(
+            scope="metropolitan",
+            location="Area Metropolitana de Monterrey",
+            datetime_iso=summary.get("generated_at"),
+            pm10=base_particles.get("pm10"),
+            pm25=base_particles.get("pm25"),
+            gases={},
+            particles=base_particles,
+            aggregates={"particles": aggregate_particles, "gases": gases_stats},
+            highlights=highlights,
+        )
+
+        response_payload = {
+            "scope": "metropolitan",
+            "generated_at": summary.get("generated_at"),
+            "rows_per_location": summary.get("rows_per_location"),
+            "locations_count": summary.get("locations_count"),
+            "summary": summary.get("summary"),
+            "highlights": highlights,
+        }
+
+    prompt = build_user_prompt(context)
 
     try:
         recommendation = request_recommendations(prompt)
@@ -411,18 +475,8 @@ def get_recommendation():
             502,
         )
 
-    return jsonify(
-        {
-            "location_id": str(location_id),
-            "location_name": location_name,
-            "datetime": datetime_iso,
-            "inputs": json.loads(latest_row.to_json(orient="records"))[0],
-            "gases": gases_dict,
-            "particles": particle_outputs,
-            "prompt": prompt,
-            "recommendation": recommendation,
-        }
-    )
+    response_payload.update({"prompt": prompt, "recommendation": recommendation})
+    return jsonify(response_payload)
 
 
 @api_bp.route("/aq/metropolitan-summary", methods=["GET"])

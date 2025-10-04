@@ -313,16 +313,20 @@ curl -X POST https://<tu-dominio>/api/alerts/subscribe \
 ```
 - Considera agregar validación en el frontend (formato de email, longitud de teléfono) antes de enviar la solicitud.
 
-### POST `/aq/recommendation`
-- Requiere un JSON con al menos `location_id`. Opcionalmente acepta `rows` para seleccionar cuántas filas previas revisar (se usa la más reciente).
-- Usa los modelos locales para obtener la predicción más reciente y construye una recomendación con OpenAI (`OPENAI_API_KEY` debe estar definido y la librería `openai` instalada).
+### POST `/aq/recommendations`
+- Genera recomendaciones con OpenAI para una estación específica (`scope=station`, valor por defecto) o para toda el área metropolitana (`scope=metropolitan`). Requiere que `OPENAI_API_KEY` esté definido y la librería `openai` instalada.
+- Cuerpo esperado:
+  - `scope`: `station` (default) o `metropolitan`.
+  - `location_id`: obligatorio cuando `scope=station`.
+  - `rows`: opcional, cuántas filas recientes considerar por estación (default `1`).
 ```bash
-curl -X POST https://<tu-dominio>/api/aq/recommendation \
+curl -X POST https://<tu-dominio>/api/aq/recommendations \
   -H "Content-Type: application/json" \
-  -d '{"location_id":"7919"}'
+  -d '{"scope":"station","location_id":"7919"}'
 ```
 ```json
 {
+  "scope": "station",
   "location_id": "7919",
   "location_name": "Apodaca-7919",
   "datetime": "2024-12-24 11:00:00+00:00",
@@ -331,7 +335,28 @@ curl -X POST https://<tu-dominio>/api/aq/recommendation \
   "recommendation": "1) Riesgo moderado: las partículas finas superan los 20 ug/m3..."
 }
 ```
-- Maneja los códigos `500`/`503` para notificar al usuario si la clave de OpenAI falta o si la llamada fue rechazada.
+- Para recomendaciones agregadas del área metropolitana:
+```bash
+curl -X POST https://<tu-dominio>/api/aq/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"metropolitan","rows":2}'
+```
+```json
+{
+  "scope": "metropolitan",
+  "generated_at": "2024-12-24T12:05:10Z",
+  "rows_per_location": 2,
+  "summary": {
+    "particles": {"pm10": {"avg": 63.4, "max": 109.1}, "pm25": {"avg": 25.5, "max": 35.8}},
+    "gases": {...}
+  },
+  "highlights": {
+    "pm10": {"location_name": "Universidad-7951", "value": 109.1, "timestamp": "2024-12-24T12:00:00+00:00"}
+  },
+  "recommendation": "1) Riesgo alto: el promedio metropolitano de PM10 supera los 60 ug/m3..."
+}
+```
+- Maneja los códigos `400` si faltan parámetros o `500/503` cuando la dependencia de OpenAI no está disponible.
 
 ### GET `/aq/metropolitan-summary`
 - Parámetro opcional `rows` para indicar cuántas observaciones recientes incluir por estación (default `1`, máximo sugerido `24`).
