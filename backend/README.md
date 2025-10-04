@@ -95,8 +95,10 @@ PORT=5000
 - `api/earth_access_connection.py`: integración con Earthdata CMR (colecciones, granulos, descarga). Incluye CLI (`python api/earth_access_connection.py granules ...`).
 - `api/openstreetmap_connection.py`: generador de tráfico sintético parametrizable mediante OSMnx.
 - `ai/create_dataset.py`: ETL que fusiona aire, clima y features temporales → `ai/output/dataset_final.csv`.
-- `ai/model.py`: entrena NN para gases y CatBoost individual para PM10/PM25; guarda artefactos + metadatos en `ai/models/`.
-- `ai/inference.py`: carga modelos/escálers y permite pruebas rápidas (`--rows`).
+- `ai/model.py`: entrena la red neuronal multisalida para gases (`co`, `no`, `no2`, `nox`, `o3`, `so2`) y dos CatBoost para partículas (`pm10`, `pm25`).
+  - Usa `dataset_final.csv`, interpola huecos cortos por estación (`interpolate_pollutants`), añade atributos trigonométricos (sin/cos de hora/mes) y limpia valores extremos.
+  - Split temporal (80/20) para evaluar; reporta métricas en consola (`MSE`, `RMSE`, `R^2`) y guarda metadatos (columnas, rellenos) junto con los artefactos en `ai/models/`.
+- `ai/inference.py`: expone utilidades de inferencia (`predict_gases`, `predict_particle`), el resumen/forecast metropolitano y permite pruebas rápidas (`--rows`).
 - `api/requests_service.py`: cliente HTTP centralizado con cabeceras y manejo de errores.
 
 ### Datos usados por los modelos (`ai/`)
@@ -436,6 +438,6 @@ curl "https://<tu-dominio>/api/aq/metropolitan-forecast?hours=168&window=24"
   }
 }
 ```
-- Útil para dashboards de planificación semanal/mensual; ten presente que es un baseline y no sustituye un modelo entrenado para horizontes largos (puedes reemplazarlo por Prophet/CatBoost en el futuro y reutilizar la misma estructura de respuesta).
+- Util para dashboards de planificación semanal/mensual; ten presente que es un baseline y no sustituye un modelo entrenado para horizontes largos (puedes reemplazarlo por Prophet/CatBoost en el futuro y reutilizar la misma estructura de respuesta).
 
 > Los endpoints que dependen de servicios externos (OpenAQ/OpenWeather) devolverán errores 4xx/5xx si faltan las llaves de entorno o si la API upstream responde fuera de rango. Maneja estos casos en el frontend mostrando un mensaje de reintento.
