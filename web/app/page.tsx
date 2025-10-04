@@ -1,18 +1,35 @@
 "use client";
-import { useEffect } from "react";
+
+import Hero from "./components/Hero";
+import About from "./components/About";
+import Stats from "./components/Stats";
+import Tech from "./components/Tech";
+import CTA from "./components/CTA";
+import Footer from "./components/Footer";
+// Aquí luego importaremos Stats, Tech, CTA cuando los vayas creando
+// import Stats from "./components/Stats";
+// import Tech from "./components/Tech";
+// import CTA from "./components/CTA";
 
 export default function Home() {
-  useEffect(() => {
-    fetch(process.env.NEXT_PUBLIC_API_URL + "/health")
-      .then((res) => res.json())
-      .then((data) => console.log("Backend /health response:", data))
-      .catch((err) => console.error("Error fetching /health:", err));
-  }, []);
-
   return (
-    <div>
-      <h1 className="text-2xl font-bold">Home Placeholder</h1>
-      <p>Check console for /health response</p>
-    </div>
+    <main className="w-full">
+      {/* Hero Section */}
+      <Hero />
+
+      {/* About Section */}
+      <About />
+
+      {/* <Stats /> */}
+      <Stats />
+
+      {/* <Tech /> */}
+      <Tech />
+
+      {/* <CTA /> */}
+      <CTA />
+      {/* <Footer /> */}
+      <Footer />
+    </main>
   );
 }
