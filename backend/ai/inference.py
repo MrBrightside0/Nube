@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Iterable, Tuple
 import argparse
 
 import joblib
@@ -284,12 +284,167 @@ def build_metropolitan_summary(rows_per_location: int = 1) -> Dict[str, Any]:
     return summary
 
 
+def _validate_pollutants(dataset: pd.DataFrame, pollutants: Iterable[str]) -> list[str]:
+    available = set(dataset.columns)
+    validated: list[str] = []
+    for pollutant in pollutants:
+        if pollutant not in available:
+            raise ValueError(f"Pollutant '{pollutant}' is not present in the dataset.")
+        validated.append(pollutant)
+    return validated
+
+
+def build_metropolitan_forecast(
+    hours: int = 168,
+    window_hours: int = 24,
+    pollutants: Iterable[str] = ("pm10", "pm25"),
+) -> Dict[str, Any]:
+    if hours < 1:
+        raise ValueError("hours must be >= 1")
+    if window_hours < 1:
+        raise ValueError("window_hours must be >= 1")
+
+    dataset = _load_base_dataset()
+    if dataset.empty:
+        raise ValueError("Dataset is empty")
+
+    dataset = dataset.copy()
+    dataset["location_id"] = dataset["location_id"].astype(str)
+    dataset["datetime"] = pd.to_datetime(dataset["datetime"], utc=True, errors="coerce")
+    dataset = dataset.dropna(subset=["datetime"])
+    dataset = dataset.sort_values("datetime")
+
+    validated_pollutants = _validate_pollutants(dataset, pollutants)
+
+    timeline_bucket: Dict[str, Dict[str, list[float]]] = {}
+    location_entries: list[Dict[str, Any]] = []
+    highlights: Dict[str, Dict[str, Any]] = {}
+
+    groups = dataset.groupby("location_id", sort=False)
+    if groups.ngroups == 0:
+        raise ValueError("No locations available in dataset")
+
+    global_last_ts = dataset["datetime"].max()
+
+    for location_id, group in groups:
+        group = group.sort_values("datetime")
+        last_row = group.iloc[-1]
+        last_ts = last_row["datetime"]
+        window_start = last_ts - pd.Timedelta(hours=window_hours - 1)
+        window_df = group[group["datetime"] >= window_start]
+
+        baseline_stats: Dict[str, Any] = {}
+        predictions: list[Dict[str, Any]] = []
+
+        baseline_values: Dict[str, float] = {}
+        for pollutant in validated_pollutants:
+            series = pd.to_numeric(window_df[pollutant], errors="coerce").dropna()
+            if series.empty:
+                continue
+            baseline_values[pollutant] = float(series.mean())
+            baseline_stats[pollutant] = {
+                "window_avg": float(series.mean()),
+                "window_min": float(series.min()),
+                "window_max": float(series.max()),
+                "samples": int(series.shape[0]),
+            }
+
+        if not baseline_values:
+            continue
+
+        for step in range(1, hours + 1):
+            future_ts = global_last_ts + pd.Timedelta(hours=step)
+            ts_iso = future_ts.isoformat()
+            pollutant_values: Dict[str, float | None] = {}
+            for pollutant in validated_pollutants:
+                value = baseline_values.get(pollutant)
+                pollutant_values[pollutant] = value
+                if value is not None:
+                    timeline_bucket.setdefault(ts_iso, {}).setdefault(pollutant, []).append(value)
+                    highlight = highlights.get(pollutant)
+                    if highlight is None or value > highlight["value"]:
+                        highlights[pollutant] = {
+                            "location_id": location_id,
+                            "location_name": last_row.get("location_name") or location_id,
+                            "value": value,
+                            "timestamp": ts_iso,
+                        }
+
+            predictions.append({"timestamp": ts_iso, "pollutants": pollutant_values})
+
+        location_entries.append(
+            {
+                "location_id": location_id,
+                "location_name": last_row.get("location_name") or location_id,
+                "lat": float(last_row["lat"]) if pd.notna(last_row.get("lat")) else None,
+                "lon": float(last_row["lon"]) if pd.notna(last_row.get("lon")) else None,
+                "baseline_stats": baseline_stats,
+                "baseline_window": {
+                    "start": window_df["datetime"].min().isoformat() if not window_df.empty else None,
+                    "end": last_ts.isoformat(),
+                    "rows": int(window_df.shape[0]),
+                },
+                "predictions": predictions,
+            }
+        )
+
+    if not location_entries:
+        raise ValueError("Unable to compute baseline predictions for any location")
+
+    aggregate_timeline: list[Dict[str, Any]] = []
+    for ts_iso in sorted(timeline_bucket.keys()):
+        entry: Dict[str, Any] = {"timestamp": ts_iso, "pollutants": {}}
+        for pollutant, values in timeline_bucket[ts_iso].items():
+            if not values:
+                continue
+            series = pd.Series(values)
+            entry["pollutants"][pollutant] = {
+                "avg": float(series.mean()),
+                "min": float(series.min()),
+                "max": float(series.max()),
+                "locations_reporting": len(values),
+            }
+        aggregate_timeline.append(entry)
+
+    aggregate_stats: Dict[str, Any] = {}
+    for pollutant in validated_pollutants:
+        collected = [val for bucket in timeline_bucket.values() for val in bucket.get(pollutant, [])]
+        if not collected:
+            continue
+        series = pd.Series(collected)
+        aggregate_stats[pollutant] = {
+            "overall_avg": float(series.mean()),
+            "overall_min": float(series.min()),
+            "overall_max": float(series.max()),
+        }
+
+    payload: Dict[str, Any] = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "horizon_hours": hours,
+        "window_hours": window_hours,
+        "step_hours": 1,
+        "pollutants": validated_pollutants,
+        "locations_count": len(location_entries),
+        "locations": location_entries,
+        "aggregate": {
+            "timeline": aggregate_timeline,
+            "stats": aggregate_stats,
+        },
+    }
+
+    if highlights:
+        payload["highlights"] = highlights
+
+    return payload
+
+
 __all__ = [
     "predict_gases",
     "predict_particle",
     "load_gas_artifacts",
     "load_particle_artifacts",
     "build_metropolitan_summary",
+    "build_metropolitan_forecast",
 ]
 
 

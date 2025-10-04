@@ -450,6 +450,43 @@ def get_metropolitan_summary():
     return jsonify(summary)
 
 
+@api_bp.route("/aq/metropolitan-forecast", methods=["GET"])
+def get_metropolitan_forecast():
+    hours = request.args.get("hours", default=168, type=int)
+    window = request.args.get("window", default=24, type=int)
+    pollutants_param = request.args.get("pollutants")
+    if pollutants_param:
+        pollutants = [item.strip() for item in pollutants_param.split(",") if item.strip()]
+    else:
+        pollutants = ["pm10", "pm25"]
+
+    hours = max(hours, 1)
+    window = max(window, 1)
+
+    try:
+        forecast = inference.build_metropolitan_forecast(
+            hours=hours,
+            window_hours=window,
+            pollutants=pollutants,
+        )
+    except FileNotFoundError:
+        return (
+            jsonify(
+                {
+                    "error": "dataset_not_found",
+                    "message": "Run the ETL pipeline to generate output/dataset_final.csv.",
+                }
+            ),
+            500,
+        )
+    except ValueError as exc:
+        return (jsonify({"error": "invalid_request", "message": str(exc)}), 400)
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"error": "forecast_error", "message": str(exc)}), 500)
+
+    return jsonify(forecast)
+
+
 @api_bp.route("/aq/trends", methods=["GET"])
 def get_trends():
     days = request.args.get("days", default=7, type=int)

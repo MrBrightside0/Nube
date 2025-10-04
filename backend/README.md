@@ -381,4 +381,61 @@ curl "https://<tu-dominio>/api/aq/metropolitan-summary?rows=2"
 ```
 - Si faltan artefactos (`ai/models/*.cbm` o `gas_model.keras`) el endpoint seguirá respondiendo, adjuntando el detalle en `errors` para que el frontend pueda mostrar un aviso.
 
+### GET `/aq/metropolitan-forecast`
+- Pronóstico agregado para la Zona Metropolitana; estima hasta `hours` horas hacia el futuro usando un baseline (media de las últimas `window` horas por estación).
+- Parámetros opcionales:
+  - `hours`: horizonte en horas (default `168`, equivalente a 7 días). Límites recomendados `1` a `720` (30 días).
+  - `window`: ventana en horas para el promedio histórico por estación (default `24`).
+  - `pollutants`: lista separada por comas (p. ej. `pm10,pm25,o3`) siempre que existan en el dataset.
+```bash
+curl "https://<tu-dominio>/api/aq/metropolitan-forecast?hours=168&window=24"
+```
+```json
+{
+  "generated_at": "2024-12-24T12:05:10Z",
+  "horizon_hours": 168,
+  "window_hours": 24,
+  "pollutants": ["pm10", "pm25"],
+  "locations_count": 6,
+  "locations": [
+    {
+      "location_id": "7919",
+      "baseline_window": {
+        "start": "2024-12-23T12:00:00+00:00",
+        "end": "2024-12-24T11:00:00+00:00",
+        "rows": 24
+      },
+      "baseline_stats": {
+        "pm10": {"window_avg": 64.1, "window_min": 42.0, "window_max": 88.5, "samples": 24},
+        "pm25": {"window_avg": 22.4, "window_min": 15.1, "window_max": 34.2, "samples": 18}
+      },
+      "predictions": [
+        {"timestamp": "2024-12-24T12:00:00+00:00", "pollutants": {"pm10": 64.1, "pm25": 22.4}},
+        {"timestamp": "2024-12-24T13:00:00+00:00", "pollutants": {"pm10": 64.1, "pm25": 22.4}},
+        "..."
+      ]
+    }
+  ],
+  "aggregate": {
+    "timeline": [
+      {
+        "timestamp": "2024-12-24T12:00:00+00:00",
+        "pollutants": {
+          "pm10": {"avg": 63.4, "min": 46.0, "max": 77.8, "locations_reporting": 6},
+          "pm25": {"avg": 25.5, "min": 19.8, "max": 30.3, "locations_reporting": 4}
+        }
+      }
+    ],
+    "stats": {
+      "pm10": {"overall_avg": 63.4, "overall_min": 46.0, "overall_max": 109.1},
+      "pm25": {"overall_avg": 25.5, "overall_min": 19.8, "overall_max": 35.8}
+    }
+  },
+  "highlights": {
+    "pm10": {"location_id": "7951", "value": 109.1, "timestamp": "2024-12-24T12:00:00+00:00"}
+  }
+}
+```
+- Útil para dashboards de planificación semanal/mensual; ten presente que es un baseline y no sustituye un modelo entrenado para horizontes largos (puedes reemplazarlo por Prophet/CatBoost en el futuro y reutilizar la misma estructura de respuesta).
+
 > Los endpoints que dependen de servicios externos (OpenAQ/OpenWeather) devolverán errores 4xx/5xx si faltan las llaves de entorno o si la API upstream responde fuera de rango. Maneja estos casos en el frontend mostrando un mensaje de reintento.
