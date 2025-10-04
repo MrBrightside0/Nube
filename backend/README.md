@@ -120,3 +120,195 @@ PORT=5000
 - Reemplazar prints por logging estructurado y añadir manejo global de errores HTTP.
 - Persistir suscripciones/alertas en almacenamiento externo (DB, servicio de notificaciones).
 - Automatizar pruebas (PyTest) para los endpoints y los pipelines de inferencia.
+
+## Referencia detallada de la API
+Base URL general: `https://<tu-dominio>/api`. Todos los ejemplos asumen HTTPS en producción; sustituye `<tu-dominio>` por el host donde despliegues el backend.
+
+### GET `/health`
+- Verifica que el servicio Flask está levantado.
+- Respuesta 200 siempre que la app esté viva.
+```bash
+curl -s https://<tu-dominio>/api/health
+```
+```json
+{"ok": true}
+```
+
+### GET `/aq/latest`
+- Parámetros opcionales: `location_id` (string) o `lat`/`lon` (float). Si no se envía un identificador válido el API responde `404`.
+- Realiza llamadas a OpenAQ (calidad del aire) y OpenWeather (clima) usando las llaves configuradas en el backend; el frontend solo necesita consumir la respuesta.
+```bash
+curl "https://<tu-dominio>/api/aq/latest?location_id=7919"
+```
+```json
+{
+  "location": {
+    "id": "7919",
+    "name": "Apodaca-7919",
+    "lat": 25.7772,
+    "lon": -100.1883
+  },
+  "measurements": {
+    "pm25": {
+      "value": 22.6,
+      "unit": "ug/m3",
+      "last_updated": "2024-12-24T10:00:00Z",
+      "quality": "good",
+      "sensor_id": 182737
+    },
+    "no2": {
+      "value": 0.018,
+      "unit": "ppm",
+      "last_updated": "2024-12-24T10:00:00Z",
+      "quality": "moderate",
+      "sensor_id": 182740
+    }
+  },
+  "aqi": 71.2,
+  "weather": {
+    "temperature": 16.0,
+    "humidity": 94,
+    "pressure": 1020,
+    "wind_speed": 12.7,
+    "description": "very cloudy"
+  },
+  "sources": {
+    "openaq": {
+      "id": 7919,
+      "name": "Apodaca",
+      "city": "Monterrey",
+      "coordinates": {"latitude": 25.7772, "longitude": -100.1883},
+      "datetime_first": "2018-06-30T00:00:00Z",
+      "datetime_last": "2024-12-24T10:00:00Z"
+    }
+  }
+}
+```
+
+### GET `/aq/predictions`
+- Parámetros opcionales: `location_id`, `rows` (por defecto 1, máximo práctico recomendado 24) y `include_particles` (`true`/`false`).
+- Devuelve las filas del dataset usadas como entrada (`inputs`), el resultado del modelo de gases (`gases`) y, si se solicita, los vectores de partículas (`particles`).
+```bash
+curl "https://<tu-dominio>/api/aq/predictions?location_id=7919&rows=2"
+```
+```json
+{
+  "rows": 2,
+  "inputs": [
+    {
+      "datetime": "2024-12-24 10:00:00+00:00",
+      "location_id": 7919,
+      "location_name": "Apodaca-7919",
+      "pm10": 31.0,
+      "co": 0.41,
+      "no2": 0.0186,
+      "rhum_mean": 90.33,
+      "temp_mean": 16.63,
+      "...": "más de 60 columnas de contexto"
+    }
+  ],
+  "gases": [
+    {"co": 0.8643, "no": 0.0327, "no2": 0.0193, "nox": 0.0520, "o3": 0.0131, "so2": 0.0033}
+  ],
+  "particles": {
+    "pm10": [61.85, 71.69],
+    "pm25": [18.31, 22.10]
+  }
+}
+```
+- Manejo recomendado en el frontend cuando el payload es grande:
+  1. Solicita solo las filas que necesites (`rows=1` para dashboards, `rows=24` para gráficos horarios).
+  2. Si solo muestras gases, agrega `include_particles=false` para reducir ~40% del tamaño.
+  3. Consume únicamente los campos relevantes de `inputs`. Puedes mapear las claves a etiquetas más legibles y omitir el resto.
+  4. Persistir en el cliente solo los vectores que renderizarás; para tablas largas usa paginación o agrega un botón "ver detalles".
+  5. Si requieres un histórico mayor, realiza varias peticiones paginadas (`rows=24` + `location_id`) y almacena en IndexedDB/local storage para evitar re-descargas.
+
+Ejemplo en JavaScript para quedarte con lo esencial:
+```js
+const params = new URLSearchParams({ location_id: '7919', rows: '1' });
+fetch(`https://<tu-dominio>/api/aq/predictions?${params}`)
+  .then((resp) => resp.json())
+  .then(({ gases = [], particles }) => {
+    const latest = gases[0] ?? {};
+    const pm10 = particles?.pm10?.[0] ?? null;
+    renderPrediction({ co: latest.co, no2: latest.no2, pm10 });
+  })
+  .catch(console.error);
+```
+
+### GET `/aq/trends`
+- Requiere `location_id`. Parámetro opcional `days` (1-30 recomendado) para limitar el histórico.
+```bash
+curl "https://<tu-dominio>/api/aq/trends?location_id=7919&days=7"
+```
+```json
+{
+  "location_id": "7919",
+  "days": 7,
+  "series": {
+    "pm25": [],
+    "no2": [
+      {"datetime": "2024-12-22T12:00:00Z", "no2": 0.0157},
+      {"datetime": "2024-12-22T13:00:00Z", "no2": 0.0177}
+    ]
+  },
+  "correlation_pm25_no2": null
+}
+```
+
+### GET `/aq/forecast`
+- Requiere `location_id`. Parámetros opcionales: `pollutant` (default `pm25`) y `h` (1-168 horas).
+```bash
+curl "https://<tu-dominio>/api/aq/forecast?location_id=7919&pollutant=pm10&h=4"
+```
+```json
+{
+  "location_id": "7919",
+  "pollutant": "pm10",
+  "hours": 4,
+  "model": "naive_mean",
+  "predictions": [
+    {"timestamp": "2024-12-24T12:00:00+00:00", "yhat": 64.125, "pi_low": 23.89, "pi_high": 104.36},
+    {"timestamp": "2024-12-24T13:00:00+00:00", "yhat": 64.125, "pi_low": 23.89, "pi_high": 104.36}
+  ]
+}
+```
+
+### GET `/aq/sources`
+- Devuelve todas las estaciones de aire disponibles y las estaciones meteorológicas que alimentan el modelo.
+```bash
+curl -s https://<tu-dominio>/api/aq/sources
+```
+```json
+{
+  "air_quality": [
+    {"location_id": "427", "location_name": "Juárez-427", "lat": 25.6461, "lon": -100.0956, "openaq_id": "427"},
+    {"location_id": "7919", "location_name": "Apodaca-7919", "lat": 25.7772, "lon": -100.1883, "openaq_id": "7919"}
+  ],
+  "weather": [
+    {"station_id": "76393", "name": "Monterrey", "lat": 25.8667, "lon": -100.2000},
+    {"station_id": "76394", "name": "Monterrey Airport", "lat": 25.8667, "lon": -100.2333}
+  ]
+}
+```
+
+### POST `/alerts/subscribe`
+- Recibe un JSON con `contact` (email/teléfono) y un objeto opcional `preferences`. Persiste la suscripción en `api/cache/alerts.json`.
+```bash
+curl -X POST https://<tu-dominio>/api/alerts/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"contact":"ana@example.com","preferences":{"threshold_pm25":35}}'
+```
+```json
+{
+  "success": true,
+  "stored": {
+    "contact": "ana@example.com",
+    "preferences": {"threshold_pm25": 35},
+    "created_at": "2024-12-24T11:15:30Z"
+  }
+}
+```
+- Considera agregar validación en el frontend (formato de email, longitud de teléfono) antes de enviar la solicitud.
+
+> Los endpoints que dependen de servicios externos (OpenAQ/OpenWeather) devolverán errores 4xx/5xx si faltan las llaves de entorno o si la API upstream responde fuera de rango. Maneja estos casos en el frontend mostrando un mensaje de reintento.

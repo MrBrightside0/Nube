@@ -10,6 +10,7 @@ print(
         "OPENWEATHER_KEY": bool(os.getenv("OPENWEATHER_KEY")),
         "TEMPO_KEY": bool(os.getenv("TEMPO_KEY")),
         "EARTH_ACCESS_KEY": bool(os.getenv("EARTH_ACCESS_KEY")),
+        "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
     },
 )
 
@@ -23,6 +24,7 @@ OPENAQ_KEY = _get_env("OPEN_AQ_KEY")
 TEMPO_KEY = _get_env("TEMPO_KEY")
 EARTH_ACCESS_KEY = _get_env("EARTH_ACCESS_KEY")
 OPENWEATHER_KEY = _get_env("OPENWEATHER_KEY")
+OPENAI_API_KEY = _get_env("OPENAI_API_KEY")
 
 
 SENSORS_DICT = {"Garcia" : 4454898,
