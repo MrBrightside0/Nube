@@ -311,4 +311,24 @@ curl -X POST https://<tu-dominio>/api/alerts/subscribe \
 ```
 - Considera agregar validación en el frontend (formato de email, longitud de teléfono) antes de enviar la solicitud.
 
+### POST `/aq/recommendation`
+- Requiere un JSON con al menos `location_id`. Opcionalmente acepta `rows` para seleccionar cuántas filas previas revisar (se usa la más reciente).
+- Usa los modelos locales para obtener la predicción más reciente y construye una recomendación con OpenAI (`OPENAI_API_KEY` debe estar definido y la librería `openai` instalada).
+```bash
+curl -X POST https://<tu-dominio>/api/aq/recommendation \
+  -H "Content-Type: application/json" \
+  -d '{"location_id":"7919"}'
+```
+```json
+{
+  "location_id": "7919",
+  "location_name": "Apodaca-7919",
+  "datetime": "2024-12-24 11:00:00+00:00",
+  "gases": {"co": 0.80, "no2": 0.018, "o3": 0.012},
+  "particles": {"pm10": 71.69, "pm25": 22.10},
+  "recommendation": "1) Riesgo moderado: las partículas finas superan los 20 ug/m3..."
+}
+```
+- Maneja los códigos `500`/`503` para notificar al usuario si la clave de OpenAI falta o si la llamada fue rechazada.
+
 > Los endpoints que dependen de servicios externos (OpenAQ/OpenWeather) devolverán errores 4xx/5xx si faltan las llaves de entorno o si la API upstream responde fuera de rango. Maneja estos casos en el frontend mostrando un mensaje de reintento.
