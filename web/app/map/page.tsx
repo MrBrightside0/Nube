@@ -2,7 +2,6 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { FiMenu } from "react-icons/fi";
-import { useMap } from "react-leaflet";  // 👈 hook directo
 import {
   LineChart,
   Line,
@@ -13,20 +12,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// ⚡ Import dinámico para evitar SSR error de Leaflet
+// ⚡ Cargas dinámicas para evitar errores de SSR
 const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });
 const Marker = dynamic(() => import("react-leaflet").then((m) => m.Marker), { ssr: false });
 const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), { ssr: false });
-
-function ChangeView({ center }: { center: [number, number] }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(center, 11, { animate: true });
-  }, [center, map]);
-  return null;
-}
-
 
 interface City {
   name: string;
@@ -43,7 +33,7 @@ const cities: City[] = [
 export default function MapPage() {
   const [data, setData] = useState<any>(null);
   const [trends, setTrends] = useState<any[]>([]);
-  const [city, setCity] = useState<City>(cities[0]); // default Monterrey
+  const [city, setCity] = useState<City>(cities[0]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Datos actuales
@@ -54,7 +44,7 @@ export default function MapPage() {
       .catch((err) => console.error("Error al obtener datos:", err));
   }, [city]);
 
-  // Tendencias históricas
+  // Tendencias 7 días
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/aq/trends?lat=${city.lat}&lon=${city.lon}&days=7`)
       .then((res) => res.json())
@@ -63,10 +53,10 @@ export default function MapPage() {
   }, [city]);
 
   return (
-    <main className="pt-24 px-4 flex gap-6">
-      {/* Botón hamburguesa solo en móvil */}
+    <main className="relative flex flex-col md:flex-row pt-20 h-[calc(100vh-80px)] overflow-hidden">
+      {/* Botón menú móvil */}
       <button
-        className="md:hidden fixed top-24 left-4 z-50 bg-[#5ac258] text-black p-3 rounded-full shadow-lg"
+        className="md:hidden fixed top-24 right-4 z-50 bg-[#5ac258] text-black p-3 rounded-full shadow-lg"
         onClick={() => setSidebarOpen(!sidebarOpen)}
       >
         <FiMenu size={22} />
@@ -74,8 +64,8 @@ export default function MapPage() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed md:static top-0 left-0 h-full md:h-auto w-80 bg-black/90 text-white 
-        rounded-none md:rounded-2xl p-6 shadow-xl transform transition-transform duration-300 z-40
+        className={`fixed md:static top-0 left-0 h-full md:h-auto w-[85%] md:w-80 bg-black/95 text-white 
+        rounded-none md:rounded-2xl p-6 shadow-xl transition-transform duration-300 z-40
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
         <h2 className="text-2xl font-bold mb-4">Air Quality</h2>
@@ -122,17 +112,25 @@ export default function MapPage() {
             </LineChart>
           </ResponsiveContainer>
         </div>
+
+        {/* Botón cerrar en móvil */}
+        <button
+          className="md:hidden mt-6 w-full py-2 bg-[#5ac258] text-black font-semibold rounded-xl"
+          onClick={() => setSidebarOpen(false)}
+        >
+          Cerrar panel
+        </button>
       </aside>
 
-      {/* Mapa */}
-      <div className="flex-1 h-[80vh] rounded-2xl overflow-hidden shadow-lg">
+      {/* 🌍 Mapa principal */}
+      <div className="flex-1 w-full h-full rounded-none md:rounded-2xl overflow-hidden shadow-lg">
         <MapContainer
+          key={`${city.lat}-${city.lon}`} // 👈 fuerza un nuevo mapa por ciudad
           center={[city.lat, city.lon]}
           zoom={11}
           scrollWheelZoom={true}
-          className="w-full h-full"
+          className="w-full h-full z-10"
         >
-          <ChangeView center={[city.lat, city.lon]} /> {/* 👈 mueve el mapa automáticamente */}
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
