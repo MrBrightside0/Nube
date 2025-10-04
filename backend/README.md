@@ -331,4 +331,54 @@ curl -X POST https://<tu-dominio>/api/aq/recommendation \
 ```
 - Maneja los códigos `500`/`503` para notificar al usuario si la clave de OpenAI falta o si la llamada fue rechazada.
 
+### GET `/aq/metropolitan-summary`
+- Parámetro opcional `rows` para indicar cuántas observaciones recientes incluir por estación (default `1`, máximo sugerido `24`).
+- Agrega todas las ubicaciones de la ZMM, ejecuta los modelos de gases/partículas y devuelve un payload listo para dashboards metropolitanos.
+```bash
+curl "https://<tu-dominio>/api/aq/metropolitan-summary?rows=2"
+```
+```json
+{
+  "generated_at": "2024-12-24T12:05:10Z",
+  "rows_per_location": 2,
+  "locations_count": 6,
+  "locations": [
+    {
+      "location_id": "7919",
+      "location_name": "Apodaca-7919",
+      "lat": 25.7772,
+      "lon": -100.1883,
+      "observations": [
+        {
+          "datetime": "2024-12-24T10:00:00+00:00",
+          "gases": {"co": 0.8644, "no2": 0.0193, "o3": 0.0131},
+          "particles": {"pm10": 61.85, "pm25": 18.31}
+        },
+        {
+          "datetime": "2024-12-24T11:00:00+00:00",
+          "gases": {"co": 0.8036, "no2": 0.0175, "o3": 0.0122},
+          "particles": {"pm10": 71.69, "pm25": 22.10}
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "gases": {"co": {"min": 0.80, "max": 0.97, "avg": 0.86}},
+    "particles": {"pm10": {"min": 42.15, "max": 109.13, "avg": 68.44}}
+  },
+  "highlights": {
+    "highest_pm10": {
+      "location_id": "7951",
+      "location_name": "Universidad-7951",
+      "value": 109.13,
+      "datetime": "2024-12-24T11:00:00+00:00"
+    }
+  },
+  "errors": {
+    "pm25": "CatBoost artifacts for pm25 not found."
+  }
+}
+```
+- Si faltan artefactos (`ai/models/*.cbm` o `gas_model.keras`) el endpoint seguirá respondiendo, adjuntando el detalle en `errors` para que el frontend pueda mostrar un aviso.
+
 > Los endpoints que dependen de servicios externos (OpenAQ/OpenWeather) devolverán errores 4xx/5xx si faltan las llaves de entorno o si la API upstream responde fuera de rango. Maneja estos casos en el frontend mostrando un mensaje de reintento.

@@ -425,6 +425,31 @@ def get_recommendation():
     )
 
 
+@api_bp.route("/aq/metropolitan-summary", methods=["GET"])
+def get_metropolitan_summary():
+    rows = request.args.get("rows", default=1, type=int)
+    rows = max(rows, 1)
+
+    try:
+        summary = inference.build_metropolitan_summary(rows_per_location=rows)
+    except FileNotFoundError:
+        return (
+            jsonify(
+                {
+                    "error": "dataset_not_found",
+                    "message": "Run the ETL pipeline to generate output/dataset_final.csv.",
+                }
+            ),
+            500,
+        )
+    except ValueError as exc:
+        return (jsonify({"error": "invalid_request", "message": str(exc)}), 400)
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"error": "summary_error", "message": str(exc)}), 500)
+
+    return jsonify(summary)
+
+
 @api_bp.route("/aq/trends", methods=["GET"])
 def get_trends():
     days = request.args.get("days", default=7, type=int)

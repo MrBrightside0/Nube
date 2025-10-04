@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Tuple
 import argparse
 
 import joblib
@@ -96,11 +97,199 @@ def predict_particle(target: str, features: pd.DataFrame) -> np.ndarray:
     return model.predict(pool)
 
 
+def _to_iso(value: Any) -> str | None:
+    if pd.isna(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        if value.tzinfo is None:
+            return value.isoformat() + "Z"
+        return value.isoformat()
+    try:
+        parsed = pd.to_datetime(value, utc=True)
+        return parsed.isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_stats(series: pd.Series) -> Dict[str, float] | None:
+    cleaned = series.dropna()
+    if cleaned.empty:
+        return None
+    return {
+        "min": float(cleaned.min()),
+        "max": float(cleaned.max()),
+        "avg": float(cleaned.mean()),
+    }
+
+
+def build_metropolitan_summary(rows_per_location: int = 1) -> Dict[str, Any]:
+    if rows_per_location < 1:
+        raise ValueError("rows_per_location must be >= 1")
+
+    dataset = _load_base_dataset()
+    if dataset.empty:
+        raise ValueError("Dataset is empty")
+
+    dataset = dataset.copy()
+    dataset["location_id"] = dataset["location_id"].astype(str)
+    if "datetime" in dataset.columns:
+        dataset = dataset.sort_values("datetime")
+
+    snapshot = (
+        dataset.groupby("location_id", group_keys=False)
+        .tail(rows_per_location)
+        .reset_index(drop=True)
+    )
+
+    if snapshot.empty:
+        raise ValueError("Snapshot for metropolitan summary is empty")
+
+    gas_predictions = None
+    gas_error = None
+    try:
+        gas_predictions = predict_gases(snapshot.copy())
+    except FileNotFoundError:
+        gas_error = "Gas model artifacts not found."
+
+    particle_predictions: Dict[str, Dict[int, float]] = {}
+    particle_errors: Dict[str, str] = {}
+    for target in ("pm10", "pm25"):
+        try:
+            preds = predict_particle(target, snapshot.copy())
+            particle_predictions[target] = {
+                idx: float(value) for idx, value in enumerate(preds)
+            }
+        except FileNotFoundError:
+            particle_errors[target] = f"CatBoost artifacts for {target} not found."
+
+    gas_map: Dict[int, Dict[str, float]] = {}
+    if gas_predictions is not None and not gas_predictions.empty:
+        for idx, row in gas_predictions.iterrows():
+            gas_map[idx] = {k: float(v) for k, v in row.items()}
+
+    locations_output: list[Dict[str, Any]] = []
+    particle_values: Dict[str, list[float]] = {"pm10": [], "pm25": []}
+    gas_values: Dict[str, list[float]] = {}
+
+    grouped = snapshot.groupby(snapshot["location_id"], sort=False)
+
+    for location_id, group in grouped:
+        observations: list[Dict[str, Any]] = []
+        last_row = group.iloc[-1]
+        lat = last_row.get("lat")
+        lon = last_row.get("lon")
+        location_entry = {
+            "location_id": location_id,
+            "location_name": last_row.get("location_name") or location_id,
+            "lat": float(lat) if pd.notna(lat) else None,
+            "lon": float(lon) if pd.notna(lon) else None,
+            "observations": observations,
+        }
+
+        for global_idx, row in group.iterrows():
+            gases = gas_map.get(global_idx)
+            if gases:
+                for key, value in gases.items():
+                    if pd.notna(value):
+                        gas_values.setdefault(key, []).append(float(value))
+
+            particles = {}
+            for target in ("pm10", "pm25"):
+                value = particle_predictions.get(target, {}).get(global_idx)
+                particles[target] = value
+                if value is not None:
+                    particle_values.setdefault(target, []).append(value)
+
+            observations.append(
+                {
+                    "datetime": _to_iso(row.get("datetime")),
+                    "gases": gases,
+                    "particles": particles,
+                }
+            )
+
+        locations_output.append(location_entry)
+
+    summary = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "rows_per_location": rows_per_location,
+        "locations_count": len(locations_output),
+        "locations": locations_output,
+        "summary": {
+            "gases": {},
+            "particles": {},
+        },
+    }
+
+    if gas_predictions is not None and not gas_predictions.empty:
+        for column, values in gas_values.items():
+            series = pd.Series(values)
+            stats = _build_stats(series)
+            if stats:
+                summary["summary"]["gases"][column] = stats
+    if particle_values:
+        for column, values in particle_values.items():
+            if not values:
+                continue
+            series = pd.Series(values)
+            stats = _build_stats(series)
+            if stats:
+                summary["summary"]["particles"][column] = stats
+
+    highlights: Dict[str, Any] = {}
+    if summary["summary"]["particles"].get("pm10"):
+        best = None
+        for entry in locations_output:
+            latest = entry["observations"][-1]
+            value = latest["particles"].get("pm10")
+            if value is None:
+                continue
+            if best is None or value > best["value"]:
+                best = {
+                    "location_id": entry["location_id"],
+                    "location_name": entry["location_name"],
+                    "value": value,
+                    "datetime": latest["datetime"],
+                }
+        if best:
+            highlights["highest_pm10"] = best
+
+    if summary["summary"]["particles"].get("pm25"):
+        best = None
+        for entry in locations_output:
+            latest = entry["observations"][-1]
+            value = latest["particles"].get("pm25")
+            if value is None:
+                continue
+            if best is None or value > best["value"]:
+                best = {
+                    "location_id": entry["location_id"],
+                    "location_name": entry["location_name"],
+                    "value": value,
+                    "datetime": latest["datetime"],
+                }
+        if best:
+            highlights["highest_pm25"] = best
+
+    if highlights:
+        summary["highlights"] = highlights
+
+    errors = {}
+    if gas_error:
+        errors["gases"] = gas_error
+    errors.update(particle_errors)
+    if errors:
+        summary["errors"] = errors
+
+    return summary
+
+
 __all__ = [
     "predict_gases",
     "predict_particle",
     "load_gas_artifacts",
     "load_particle_artifacts",
+    "build_metropolitan_summary",
 ]
 
 
