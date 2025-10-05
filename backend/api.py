@@ -19,12 +19,26 @@ app = FastAPI(title="CleanSkies API", version="1.0.0")
 # ============================================================
 # 🌐 Configuración de CORS
 # ============================================================
+raw_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+allowed_origins = [origin.strip() for origin in raw_origins if origin.strip()]
+
+if not allowed_origins:
+    # 🔹 Fallback razonable para desarrollo local
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+    origins = [
+        "https://satairlite.vercel.app",
+        "https://nube-production-1a47.up.railway.app/"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
 # ============================================================
