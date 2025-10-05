@@ -1,9 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 🚫 Desactivar Turbopack para evitar errores con MUI/Emotion
   experimental: {
-    turbo: false,
+    turbo: false, // Desactiva Turbopack si te está dando errores con MUI/Emotion
+  },
+  compiler: {
+    emotion: true, // Activa soporte para Emotion
   },
 };
 
-module.exports = nextConfig;
+export default nextConfig;
