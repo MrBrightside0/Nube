@@ -8,6 +8,9 @@ pip install -r requirements.txt
 python api.py
 ```
 
+### Variables de entorno relevantes
+- `ALLOWED_ORIGINS`: lista separada por comas con los orígenes que pueden llamar a la API (ej. `https://app.mi-frontend.com,https://admin.mi-frontend.com`). Si no se define, se permiten `http://localhost:3000` y `http://localhost:5173` para desarrollo.
+
 ## 📚 Rutas de la API
 
 ### GET `/api/health`
