@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Query, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import sys, os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import os
 
 # ============================================================
