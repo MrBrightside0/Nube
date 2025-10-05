@@ -29,9 +29,14 @@ if not allowed_origins:
         "http://localhost:5173",
     ]
 
+    origins = [
+        "https://satairlite.vercel.app",
+        "https://nube-production-1a47.up.railway.app/"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
