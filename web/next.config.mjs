@@ -1,4 +1,9 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  // 🚫 Desactivar Turbopack para evitar errores con MUI/Emotion
+  experimental: {
+    turbo: false,
+  },
+};
 
-export default nextConfig;
+module.exports = nextConfig;
