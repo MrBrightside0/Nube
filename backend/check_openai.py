@@ -11,7 +11,7 @@ else:
     print("✅ Archivo .env cargado correctamente.")
 
 # 2️⃣ Verificar que la API key esté presente
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = "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"
 
 if not api_key:
     print("❌ No se encontró la variable OPENAI_API_KEY en el entorno.")
