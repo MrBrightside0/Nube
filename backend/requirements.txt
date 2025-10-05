@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+requests
+joblib
+scikit-learn
+xgboost
+python-dotenv
+openai>=1.35.0
