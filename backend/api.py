@@ -30,8 +30,7 @@ if not allowed_origins:
     ]
 
 origins = [
-    "https://satairlite.vercel.app",
-    "https://nube-production-1a47.up.railway.app/"
+    "https://satairlite.vercel.app/"
 ]
 
 app.add_middleware(
